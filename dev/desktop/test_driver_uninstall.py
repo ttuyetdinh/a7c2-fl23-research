@@ -39,6 +39,44 @@ class DriverUninstallTests(unittest.TestCase):
                 drivers.install({'pid':pid},self.root,report=report)
             scan.assert_not_called()
 
+    def stage_service(self, run=None):
+        admin = SimpleNamespace(shell32=SimpleNamespace(IsUserAnAdmin=lambda: True))
+        with patch.object(drivers.sys, 'platform', 'win32'), \
+             patch.object(drivers.ctypes, 'windll', admin, create=True), \
+             patch.dict(os.environ, {'WINDIR': str(self.root)}), \
+             patch.object(drivers, 'scan', return_value=dict(devices=[], errors=[])), \
+             patch.object(drivers, 'installer', return_value='wdi-simple.exe') as installer, \
+             patch.object(drivers, 'elevate_request') as elevate, \
+             patch.object(drivers.subprocess, 'run', side_effect=run) as command:
+            result = drivers.install({'pid': '0336', 'stage': True}, self.root)
+        return result, installer, elevate, command
+
+    def test_absent_service_identity_is_staged_once(self):
+        service = '[Strings]\nDeviceID="VID_054C&PID_0336"\n[Models]\nService=Install,USB\\%DeviceID%\n'
+        def install(command, **kw):
+            self.assertIn('0x0336', command)
+            (self.root / 'INF/oem7.inf').write_text(service, encoding='utf-16')
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+        # oem42.inf binds only 0E8A, so the service package is still missing.
+        result, installer, elevate, command = self.stage_service(install)
+        self.assertTrue(result['driver_changed']);self.assertEqual(result['staged'], 'oem7.inf')
+        elevate.assert_not_called();self.assertEqual(command.call_count, 1)
+        result, installer, elevate, command = self.stage_service()
+        self.assertFalse(result['driver_changed']);self.assertEqual(result['staged'], 'oem7.inf')
+        installer.assert_not_called();elevate.assert_not_called();command.assert_not_called()
+
+    def test_staging_without_a_stored_package_stops(self):
+        with self.assertRaisesRegex(RuntimeError, 'driver store'):
+            self.stage_service(lambda command, **kw: SimpleNamespace(returncode=0, stdout='', stderr=''))
+
+    def test_absent_service_identity_is_not_installed_without_staging(self):
+        with patch.object(drivers.sys, 'platform', 'win32'), \
+             patch.object(drivers, 'scan', return_value=dict(devices=[], errors=[])), \
+             patch.object(drivers, 'installer') as installer:
+            with self.assertRaisesRegex(RuntimeError, '054C:0336'):
+                drivers.install({'pid': '0336'}, self.root)
+        installer.assert_not_called()
+
     def test_windows_native_driver_never_deleted(self):
         rows = [dict(self.rows[0], inf='usbstor.inf')]
         self.assertEqual(drivers.uninstall_plan(rows, {'0e8a'}, self.root / 'INF'), [])

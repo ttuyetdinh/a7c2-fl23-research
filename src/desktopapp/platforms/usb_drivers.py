@@ -91,7 +91,8 @@ def driver_arguments(executable, pid, folder):
 def elevate_request(arguments, job, action='driver_install'):
     """Elevate a fixed driver action, with a real process handle and full log."""
     from ..jobs import worker_command
-    request = job / ('elevated-' + action + '-' + str(arguments.get('pid', 'camera'))) / 'request.private.json'
+    label = str(arguments.get('pid', 'camera')) + ('-stage' if arguments.get('stage') else '')
+    request = job / ('elevated-' + action + '-' + label) / 'request.private.json'
     elevated = request.parent
     elevated.mkdir(parents=True)
     write_json(request, {'schema': 'a7c2-desktop-job/1', 'job_dir': str(elevated),
@@ -190,7 +191,19 @@ def install(arguments, job, *, report=None):
     write_json(job / 'driver-before.private.json', before)
     write_json(job / ('driver-before-' + pid + '.private.json'), before)
     matching = [d for d in before['devices'] if ('PID_' + pid.upper()) in d['id'].upper()]
-    if not matching:
+    # The service identity 0336 only exists briefly after authentication and
+    # falls back to 0D68 when the host has no driver for it, so prepare()
+    # stages its package while the camera is still in Mass Storage mode.
+    staging = not matching and bool(arguments.get('stage'))
+    if staging:
+        staged = staged_package(pid)
+        if staged:
+            print('054C:%s 尚未出现；系统中已有其驱动包 %s，跳过预装。' % (pid.upper(), staged), flush=True)
+            result = {'driver_changed': False, 'pid': pid, 'staged': staged, 'report': before}
+            write_json(job / ('driver-result-' + pid + '.private.json'), result)
+            return result
+        print('054C:%s 尚未出现；预先安装 WinUSB 驱动包，相机切换到该身份时 Windows 可直接使用。' % pid.upper(), flush=True)
+    elif not matching:
         query_errors=[e for e in before.get('errors',[]) if e.get('stage')=='windows-pnp']
         if query_errors:
             observed=', '.join('054C:'+row['pid'].upper()+' '+row.get('product','')
@@ -205,7 +218,7 @@ def install(arguments, job, *, report=None):
         raise RuntimeError(('未找到相机的海量存储身份 054C:0E8A，请在相机选择“海量存储”后重新连接。' if pid=='0e8a' else
                             '未找到服务身份 054C:0336，请先使用“两阶段驱动与连接”入口。')+
                            '当前检测：'+details+'。完整设备／接口信息已保存，不会为未知 PID 自动更换驱动。')
-    if all(str(d.get('service', '')).lower() in ('winusb', 'libusbk', 'libusb0') for d in matching):
+    if matching and all(str(d.get('service', '')).lower() in ('winusb', 'libusbk', 'libusb0') for d in matching):
         services = ', '.join(sorted({str(d['service']) for d in matching}))
         print('054C:%s 已安装 %s，直接沿用，跳过驱动安装与管理员申请。' % (pid.upper(), services), flush=True)
         result = {'driver_changed': False, 'pid': pid, 'note': '已安装可用驱动，本次沿用，未重复安装', 'report': before}
@@ -231,12 +244,17 @@ def install(arguments, job, *, report=None):
     if done.returncode:
         raise RuntimeError('libwdi installer exit code ' + str(done.returncode))
     result = {'driver_changed': True, 'pid': pid, 'report': after}
+    if staging:
+        result['staged'] = staged_package(pid)
+        if not result['staged']:
+            raise RuntimeError('libwdi reported success, but no driver package for 054C:' + pid.upper() +
+                               ' is in the Windows driver store. Preserve this log before retrying.')
     write_json(job / ('driver-result-' + pid + '.private.json'), result)
     return result
 
 
 def prepare(job,*,elevated=False):
-    """Explicit two-stage setup; install only a currently present camera PID."""
+    """Explicit two-stage setup: install 0E8A, stage the 0336 package, then connect."""
     from looktool.devicesession import Camera, modules
     transport, _ = modules()
     results = []
@@ -247,6 +265,7 @@ def prepare(job,*,elevated=False):
             return elevate_request({},job,action='usb_prepare')
         installer()  # Prepare the executable/download before the short PID window.
         results.append(install({'pid': '0e8a'}, job))
+        results.append(install({'pid': '0336', 'stage': True}, job))
         observed={}
         def service_present():
             from .windows_pnp import devices
@@ -331,6 +350,24 @@ def inf_hardware_ids(text):
     return re.findall(r'USB\\VID_([0-9a-f]{4})&PID_([0-9a-f]{4})(?=[\\&,\s\"]|$)', expanded, re.I)
 
 
+def inf_text(path):
+    raw = Path(path).read_bytes()
+    return raw.decode('utf-16' if raw.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8', errors='replace')
+
+
+def staged_package(pid, inf_folder=None):
+    """OEM driver package in the Windows store that binds 054C:<pid>, if any."""
+    folder = Path(inf_folder or Path(os.environ.get('WINDIR', 'C:/Windows')) / 'INF')
+    for path in sorted(folder.glob('oem*.inf')):
+        try:
+            ids = inf_hardware_ids(inf_text(path))
+        except OSError:
+            continue
+        if ('054c', pid) in {(vid.lower(), product.lower()) for vid, product in ids}:
+            return path.name
+    return None
+
+
 def uninstall_plan(rows, pids, inf_folder):
     """Never remove a native INF or a package used by another type of device."""
     selected = [row for row in rows if is_camera_id(row.get('id'), pids)]
@@ -340,8 +377,7 @@ def uninstall_plan(rows, pids, inf_folder):
         users = [row for row in rows if str(row.get('inf') or '').lower() == name]
         if any(not is_camera_id(row.get('id'), pids) for row in users):
             raise ValueError('Driver package is shared with a non-selected device; not removed: ' + name)
-        raw = (Path(inf_folder) / name).read_bytes()
-        text = raw.decode('utf-16' if raw.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8', errors='replace')
+        text = inf_text(Path(inf_folder) / name)
         ids = inf_hardware_ids(text)
         if not ids:
             raise ValueError('Could not resolve USB hardware IDs in driver INF; not removed: ' + name)

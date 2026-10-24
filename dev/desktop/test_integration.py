@@ -67,12 +67,13 @@ class IntegrationTests(unittest.TestCase):
         with patch.object(drivers.sys, 'platform', 'win32'), \
              patch.object(drivers,'is_admin',return_value=True), \
              patch.object(drivers,'installer',return_value=self.root/'wdi-simple.exe'), \
-             patch.object(drivers, 'install', side_effect=lambda args, job, **kw: events.append(args['pid'])), \
+             patch.object(drivers, 'install', side_effect=lambda args, job, **kw:
+                          events.append(args['pid'] + ('-stage' if args.get('stage') else ''))), \
              patch.object(drivers, 'scan', return_value={'devices': [{'id': 'USB\\VID_054C&PID_0336'}]}), \
              patch('looktool.devicesession.modules', return_value=(transport, None)), \
              patch('looktool.devicesession.Camera', side_effect=camera):
             result = drivers.prepare(self.root)
-        self.assertEqual(events, ['0e8a', 'first-auth', '0336', 'second-auth', 'end'])
+        self.assertEqual(events, ['0e8a', '0336-stage', 'first-auth', '0336', 'second-auth', 'end'])
         self.assertFalse(result['camera_firmware_written'])
         self.assertIsNone(transport.SERVICE_DRIVER_SETUP)
 

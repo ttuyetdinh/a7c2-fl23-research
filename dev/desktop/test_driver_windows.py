@@ -85,6 +85,7 @@ def test_installer_is_prepared_before_auth_and_pnp_snapshot_is_reused(monkeypatc
     monkeypatch.setattr(drivers,'installer',lambda:events.append('installer-ready'))
     monkeypatch.setattr(windows_pnp,'devices',lambda:rows)
     def install(args,job,**kwargs):
+        if args.get('stage'):events.append('0336-stage');return dict(driver_changed=False)
         if args['pid']=='0336':assert kwargs['report']['devices']==rows
         events.append(args['pid']);return dict(driver_changed=False)
     monkeypatch.setattr(drivers,'install',install)
@@ -96,5 +97,5 @@ def test_installer_is_prepared_before_auth_and_pnp_snapshot_is_reused(monkeypatc
         yield SimpleNamespace(identity=dict(model='ILCE-7CM2'))
     monkeypatch.setattr(devicesession,'Camera',camera)
     drivers.prepare(tmp_path)
-    assert events==['installer-ready','0e8a','auth','0336']
+    assert events==['installer-ready','0e8a','0336-stage','auth','0336']
     assert transport.SERVICE_DRIVER_SETUP is None and transport.SERVICE_DRIVER_PRESENT is None
