@@ -5,8 +5,8 @@ from pathlib import Path
 
 def namespace():
     from .devicesession import TEMP_NAMES
-    from .checkpointjob import TEMPS
-    return sorted((TEMP_NAMES | TEMPS | {'a7c2-preview-staged.so'}) - {'libJit.so'})
+    from .checkpointjob import TEMPS, LEGACY_TEMPS
+    return sorted((TEMP_NAMES | TEMPS | LEGACY_TEMPS) - {'libJit.so'})
 
 
 def supersede_temporary(camera, folder, record):

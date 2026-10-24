@@ -9,6 +9,9 @@ from .backupstore import write_json
 
 TEMPS={'checkpoint.staged.so','checkpoint.program.request','checkpoint.program.result',
        'checkpoint.names.request','checkpoint.names.result','shutter.staged.so','shutter.probe.result'}
+# Legacy FL23 CLI worker. Fresh-request cleanup may read and remove it; no
+# desktop job stages it.
+LEGACY_TEMPS={'a7c2-preview-staged.so'}
 
 
 def program_difference(expected, actual):
@@ -37,7 +40,7 @@ class CheckpointCamera(Camera):
         self.link.__enter__();self.identity=self.link.identity;self.service_only=False
         return self
     def temp_read(self,name,missing=False):
-        if name in TEMPS:return self.link.read('/tmp/jiritsu/'+name,missing)
+        if name in TEMPS or name in LEGACY_TEMPS:return self.link.read('/tmp/jiritsu/'+name,missing)
         return super().temp_read(name,missing)
     def temp_write(self,name,data):
         if name in TEMPS:
@@ -46,7 +49,7 @@ class CheckpointCamera(Camera):
             self.link.select('/tmp/jiritsu/'+name);return self.link.jiritsu(16,b'\0\xff\0'+data)
         return super().temp_write(name,data)
     def temp_remove(self,name):
-        if name in TEMPS:
+        if name in TEMPS or name in LEGACY_TEMPS:
             self.link.select('/tmp/jiritsu/'+name);return self.link.jiritsu(18,b'\0\xff')
         return super().temp_remove(name)
 

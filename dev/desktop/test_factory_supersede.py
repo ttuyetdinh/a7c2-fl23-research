@@ -154,6 +154,26 @@ def test_every_fresh_direct_write_supersedes_old_names_sound_and_restore_files(t
         assert path.read_bytes() == raw
 
 
+def test_session_camera_owns_every_cleanup_name(tmp_path):
+    # The fake cameras above accept any name; the real session camera refuses
+    # names outside its namespace before sending anything to the camera.
+    from looktool.checkpointjob import CheckpointCamera
+    from looktool.requestcleanup import namespace, supersede_temporary
+    class Link:
+        def __init__(self):
+            self.files={'/tmp/jiritsu/a7c2-preview-staged.so':b'legacy worker',
+                        '/tmp/jiritsu/unrelated-user-file':b'keep'};self.selected=None
+        def read(self,path,missing=False):return self.files.get(path.replace('/tmp/jiritsu/../../','/'))
+        def select(self,path):self.selected=path
+        def jiritsu(self,command,data):
+            assert command==18;self.files.pop(self.selected)
+    camera=CheckpointCamera.__new__(CheckpointCamera);camera.link=Link()
+    for name in namespace():camera.temp_read(name,True)
+    assert supersede_temporary(camera,tmp_path/'archive',lambda *a,**k:None)==1
+    assert (tmp_path/'archive/a7c2-preview-staged.so').read_bytes()==b'legacy worker'
+    assert camera.link.files=={'/tmp/jiritsu/unrelated-user-file':b'keep'}
+
+
 @pytest.mark.parametrize('platform', ['win32', 'darwin'])
 @pytest.mark.parametrize('action', ['direct_factory_reset', 'direct_resume_factory'])
 @pytest.mark.parametrize('old_record', [b'{broken', b'null',

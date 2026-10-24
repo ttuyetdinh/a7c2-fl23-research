@@ -124,10 +124,10 @@ The app talks to the camera through two USB identities: normal Mass Storage `054
 2. Open **连接与驱动 (Connection & drivers)** in the left sidebar.
 3. Click **检测相机与驱动 (Detect camera & drivers)**. The log should show `054C:0E8A`. If it doesn't, check the cable and the USB mode.
 4. Click **准备两阶段驱动并测试连接 (Prepare two-stage drivers & test connection)**:
-   - The app first installs the driver for `0E8A`, then switches the camera to its service connection and installs the driver for `0336` once it appears.
+   - The app first installs the driver for `0E8A` and pre-installs the driver package for `0336` (the camera only shows `0336` for a moment and falls back to `054C:0D68` if Windows has no driver ready for it). It then switches the camera to its service connection and connects.
    - Windows may ask for administrator permission **once or twice**. Click Yes.
-   - An identity that already has a usable driver (WinUSB, libusbK or libusb0) is kept as it is.
-   - The camera may show "Please check the connected device" during this step. That's expected.
+   - An identity that already has a usable driver (WinUSB, libusbK or libusb0), or a `0336` package already in Windows, is kept as it is.
+   - The camera may show "Please check the connected device", and its screen may go dark while it switches. That's expected: don't press any camera button or unplug it until the log finishes.
 5. You're done when the log says **"服务连接成功，驱动准备结束" (service connection succeeded; driver setup finished)**. This step **does not write the camera firmware**.
 6. **Recommended:** before your first write, click **检测 USB 连接稳定性（只读）(Check USB stability, read-only)** to test the cable and port.
    - The check runs for **at least 2 minutes**. It repeatedly reads the camera's two program files (the same files a write reads back in full) and compares every round with the first, byte for byte.
